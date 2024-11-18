@@ -1,6 +1,7 @@
 import collections
 import itertools
 import operator
+from tqdm import tqdm
 import random
 import time
 from copy import deepcopy
@@ -96,15 +97,17 @@ def floyd_steinberg_dither(image: NDArray, hex_palette: list[str],
 def combine(hex1: str, hex2: str) -> str:
     a = (hex_to_rgb(hex1))
     b = (hex_to_rgb(hex2))
-    return rgb_to_hex([mean([a[0], b[0]]), mean([a[1], b[1]]), mean([a[2], b[2]])])
-    # hue_diff = abs(a[0] - b[0])
-    # if hue_diff > 180:
-    #     c = min(a[0], b[0])
-    #     d = max(a[0], b[0])
-    #     avg_hue = mean([c+360, d])
-    # else:
-    #     avg_hue = mean([a[0], b[0]])
-    # return rgb_to_hex(hsv_to_rgb([avg_hue % 360, mean([a[1], b[1]]), mean([a[2], b[2]])]))
+    avg_rgb = [mean([x[0], x[1]]) for x in zip(a, b)]
+    return rgb_to_hex(avg_rgb)
+
+
+def combine_many(hexes: list[str]) -> str:
+    rgbs = [hex_to_rgb(a) for a in hexes]
+    rs = [x[0] for x in rgbs]
+    gs = [x[1] for x in rgbs]
+    bs = [x[2] for x in rgbs]
+    avg_rgb = [mean(rs), mean(gs), mean(bs)]
+    return rgb_to_hex(avg_rgb)
 
 
 def meeley_dither_2(image: NDArray, hex_palette: list[str],
@@ -112,23 +115,7 @@ def meeley_dither_2(image: NDArray, hex_palette: list[str],
     image = deepcopy(image)
     hex_palette = hex_palette.copy()
 
-    # generating all possible pairs of palette colors and keeping track of their parents
-    extended_hex_palette = sorted(list(set(product(hex_palette, hex_palette))))
-    for idx, (a, b) in enumerate(extended_hex_palette):
-        perms = list(itertools.permutations([a, b]))
-        perms = [x for x in perms if x != (a, b)]
-        if any([x in extended_hex_palette for x in perms]) or a == b:
-            extended_hex_palette[idx] = None
-    extended_hex_palette = [x for x in extended_hex_palette if x is not None]
-
-    parent_palette = {}
-    for a, b in extended_hex_palette:
-        parent_palette[combine(a, b)] = (a, b)
-    for h in hex_palette:
-        parent_palette[h] = (h, h)
-
-    sorted_p = sorted(parent_palette.items(), key=operator.itemgetter(0))
-    parent_palette = collections.OrderedDict(sorted_p)
+    parent_palette = generate_parents(hex_palette, 2)
 
     height, width, depth = image.shape
     for row in range(height):
@@ -136,15 +123,8 @@ def meeley_dither_2(image: NDArray, hex_palette: list[str],
             # image[row][col] = (closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight))
             # continue
 
-            # best_rgb = closest_rgb(rgb_color=image[row][col], hex_palette=parent_palette.keys(), h_weight=h_weight, s_weight=s_weight, v_weight=v_weight)
             best_hex = closest_hex(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
             parents = parent_palette[best_hex]
-
-            # if row == 32 and col == 57:
-            #     print(best_hex)
-            #     print(parents)
-            #     print(image[row][col], best_rgb, rgb_to_bgr(best_rgb), best_hex, parents)
-            #     print(closest_hexes(tuple(image[row][col]), tuple(parent_palette.keys()), h_weight, s_weight, v_weight))
 
             if row % 2 == 0 and col % 2 == 0 or row % 2 == 1 and col % 2 == 1:
                 image[row][col] = hex_to_rgb(parents[0])
@@ -158,33 +138,17 @@ def meeley_dither_4(image: NDArray, hex_palette: list[str],
     image = deepcopy(image)
     hex_palette = hex_palette.copy()
 
-    # generating all possible pairs of palette colors and keeping track of their parents
-    extended_hex_palette = sorted(list(set(product(hex_palette, hex_palette, hex_palette, hex_palette))))
-    for idx, (a, b, c, d) in enumerate(extended_hex_palette):
-        perms = list(itertools.permutations([a, b, c, d]))
-        perms = [x for x in perms if x != (a, b, c, d)]
-        if any([x in extended_hex_palette for x in perms]) or (a == b and a == c and a == d):
-            extended_hex_palette[idx] = None
-    extended_hex_palette = [x for x in extended_hex_palette if x is not None]
-
-    parent_palette = {}
-    for a, b, c, d in extended_hex_palette:
-        parent_palette[combine(combine(a, b), combine(c, d))] = (a, b, c, d)
-    for h in hex_palette:
-        parent_palette[h] = (h, h, h, h)
-
-    sorted_p = sorted(parent_palette.items(), key=operator.itemgetter(0))
-    parent_palette = collections.OrderedDict(sorted_p)
+    parent_palette = generate_parents(hex_palette, 4)
 
     height, width, depth = image.shape
     for row in range(height):
         for col in range(width):
             # image[row][col] = closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
             # continue
+
             best_hex = closest_hex(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
             parents = parent_palette[best_hex]
 
-            # image[row][col] = hex_to_rgb(random.choice(parents))  # random method
             if row % 2 == 0 and col % 2 == 0:
                 image[row][col] = hex_to_rgb(parents[0])
             elif row % 2 == 1 and col % 2 == 1:
@@ -193,6 +157,41 @@ def meeley_dither_4(image: NDArray, hex_palette: list[str],
                 image[row][col] = hex_to_rgb(parents[2])
             elif row % 2 == 1 and col % 2 == 0:
                 image[row][col] = hex_to_rgb(parents[3])
+    return image
+
+
+def generate_parents(hex_palette: [str], n: int) -> [str]:
+    extended_hex_palette = itertools.combinations_with_replacement(hex_palette, n)
+
+    parent_palette = {}
+    for p in extended_hex_palette:
+        parent_palette[combine_many(p)] = p
+
+    sorted_p = sorted(parent_palette.items(), key=operator.itemgetter(0))
+    parent_palette = collections.OrderedDict(sorted_p)
+    return parent_palette
+
+
+# This function works off a probabilistic method for filling in colors since we could have any n
+# Note: it will be extremely slow for high values of n
+# it took 26s on a 128x128 image with n=8 and a palette of 8 colors
+# would be faster if put on gpu (not implemented)
+def meeley_dither_n(image: NDArray, hex_palette: list[str], n: int,
+                    h_weight: float = 1, s_weight: float = 1, v_weight: float = 1) -> NDArray:
+    image = deepcopy(image)
+    hex_palette = hex_palette.copy()
+
+    parent_palette = generate_parents(hex_palette, n)
+
+    height, width, depth = image.shape
+    for row in tqdm(range(height)):
+        for col in range(width):
+            # image[row][col] = closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
+            # continue
+            best_hex = closest_hex(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
+            parents = parent_palette[best_hex]
+
+            image[row][col] = hex_to_rgb(random.choice(parents))  # random method
     return image
 
 
@@ -218,12 +217,12 @@ def parallel_constrain(image: NDArray, hex_palette: list[str],
 
 
 def results():
-    image = cv2.imread('meeley3_128.jpg')
+    image = cv2.imread('unit.png')
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     h_weight = 1
     s_weight = 1
     v_weight = 1
-    palette = two_bit_palette
+    palette = rgb_palette
 
     cv2.imwrite('results/constrain.png', cv2.cvtColor(parallel_constrain(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
     cv2.imwrite('results/floyd_ste.png', cv2.cvtColor(floyd_steinberg_dither(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
@@ -232,11 +231,11 @@ def results():
 
 
 def main():
-    image = cv2.imread('unit.png')
+    image = cv2.imread('color_test.jpg')
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     start_time = time.time()
-    image = meeley_dither_2(image, binary_palette)
+    image = meeley_dither_n(image, two_bit_palette, 8)
     print(f'Completed in {time.time() - start_time}s')
 
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -248,5 +247,5 @@ def main():
 if __name__ == '__main__':
     # print(combine('#FFFF00', '#0000FF'))
     # print(combine('#00FF00', '#00FF80'))
-    # main()
-    results()
+    main()
+    # results()

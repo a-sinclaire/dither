@@ -1,6 +1,11 @@
 import collections
+import functools
 import itertools
+import math
 import operator
+import statistics
+import sys
+
 from tqdm import tqdm
 import random
 import time
@@ -18,7 +23,7 @@ from color_conversion import rgb_to_hsv, hex_to_rgb, rgb_to_hex, hsv_to_rgb, bgr
 
 grayscale_palette = ['#000000', '#333333', '#555555', '#777777', '#999999', '#BBBBBB', '#DDDDDD', '#FFFFFF']
 binary_palette = ['#000000', '#FFFFFF']
-two_bit_palette = ['#000000', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#00FFFF', '#FF00FF', '#FFFFFF']
+three_bit_palette = ['#000000', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#00FFFF', '#FF00FF', '#FFFFFF']
 rgb_palette = ['#FF0000', '#00FF00', '#0000FF']
 
 
@@ -72,7 +77,7 @@ def floyd_steinberg_dither(image: NDArray, hex_palette: list[str],
     # Floyd-Steinberg Dithering
     height, width, depth = image.shape
     image = np.array(image, dtype=np.float32)
-    for row in range(height):
+    for row in tqdm(range(height)):
         for col in range(width):
             old_rgb_pixel = image[row][col].copy()
             new_rbg_pixel = closest_rgb(old_rgb_pixel, hex_palette, h_weight, s_weight, v_weight)
@@ -118,7 +123,7 @@ def meeley_dither_2(image: NDArray, hex_palette: list[str],
     parent_palette = generate_parents(hex_palette, 2)
 
     height, width, depth = image.shape
-    for row in range(height):
+    for row in tqdm(range(height)):
         for col in range(width):
             # image[row][col] = (closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight))
             # continue
@@ -141,7 +146,7 @@ def meeley_dither_4(image: NDArray, hex_palette: list[str],
     parent_palette = generate_parents(hex_palette, 4)
 
     height, width, depth = image.shape
-    for row in range(height):
+    for row in tqdm(range(height)):
         for col in range(width):
             # image[row][col] = closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
             # continue
@@ -151,12 +156,100 @@ def meeley_dither_4(image: NDArray, hex_palette: list[str],
 
             if row % 2 == 0 and col % 2 == 0:
                 image[row][col] = hex_to_rgb(parents[0])
+            elif row % 2 == 0 and col % 2 == 1:
+                image[row][col] = hex_to_rgb(parents[3])
+            elif row % 2 == 1 and col % 2 == 0:
+                image[row][col] = hex_to_rgb(parents[2])
             elif row % 2 == 1 and col % 2 == 1:
                 image[row][col] = hex_to_rgb(parents[1])
-            elif row % 2 == 0 and col % 2 == 1:
+    return image
+
+
+def meeley_dither_9(image: NDArray, hex_palette: list[str],
+                    h_weight: float = 1, s_weight: float = 1, v_weight: float = 1) -> NDArray:
+    image = deepcopy(image)
+    hex_palette = hex_palette.copy()
+
+    parent_palette = generate_parents(hex_palette, 9)
+
+    height, width, depth = image.shape
+    for row in tqdm(range(height)):
+        for col in range(width):
+            # image[row][col] = closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
+            # continue
+
+            best_hex = closest_hex(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
+            parents = parent_palette[best_hex]
+
+            if row % 3 == 0 and col % 3 == 0:
+                image[row][col] = hex_to_rgb(parents[5])
+            elif row % 3 == 0 and col % 3 == 1:
+                image[row][col] = hex_to_rgb(parents[0])
+            elif row % 3 == 0 and col % 3 == 2:
+                image[row][col] = hex_to_rgb(parents[6])
+            elif row % 3 == 1 and col % 3 == 0:
+                image[row][col] = hex_to_rgb(parents[1])
+            elif row % 3 == 1 and col % 3 == 1:
+                image[row][col] = hex_to_rgb(parents[7])
+            elif row % 3 == 1 and col % 3 == 2:
                 image[row][col] = hex_to_rgb(parents[2])
-            elif row % 2 == 1 and col % 2 == 0:
+            elif row % 3 == 2 and col % 3 == 0:
+                image[row][col] = hex_to_rgb(parents[8])
+            elif row % 3 == 2 and col % 3 == 1:
                 image[row][col] = hex_to_rgb(parents[3])
+            elif row % 3 == 2 and col % 3 == 2:
+                image[row][col] = hex_to_rgb(parents[4])
+    return image
+
+
+def meeley_dither_16(image: NDArray, hex_palette: list[str],
+                     h_weight: float = 1, s_weight: float = 1, v_weight: float = 1) -> NDArray:
+    image = deepcopy(image)
+    hex_palette = hex_palette.copy()
+
+    parent_palette = generate_parents(hex_palette, 16)
+
+    height, width, depth = image.shape
+    for row in tqdm(range(height)):
+        for col in range(width):
+            # image[row][col] = closest_rgb(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
+            # continue
+
+            best_hex = closest_hex(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
+            parents = parent_palette[best_hex]
+
+            if row % 4 == 0 and col % 4 == 0:
+                image[row][col] = hex_to_rgb(parents[0])
+            elif row % 4 == 0 and col % 4 == 1:
+                image[row][col] = hex_to_rgb(parents[15])
+            elif row % 4 == 0 and col % 4 == 2:
+                image[row][col] = hex_to_rgb(parents[1])
+            elif row % 4 == 0 and col % 4 == 3:
+                image[row][col] = hex_to_rgb(parents[14])
+            elif row % 4 == 1 and col % 4 == 0:
+                image[row][col] = hex_to_rgb(parents[13])
+            elif row % 4 == 1 and col % 4 == 1:
+                image[row][col] = hex_to_rgb(parents[2])
+            elif row % 4 == 1 and col % 4 == 2:
+                image[row][col] = hex_to_rgb(parents[12])
+            elif row % 4 == 1 and col % 4 == 3:
+                image[row][col] = hex_to_rgb(parents[3])
+            elif row % 4 == 2 and col % 4 == 0:
+                image[row][col] = hex_to_rgb(parents[4])
+            elif row % 4 == 2 and col % 4 == 1:
+                image[row][col] = hex_to_rgb(parents[11])
+            elif row % 4 == 2 and col % 4 == 2:
+                image[row][col] = hex_to_rgb(parents[5])
+            elif row % 4 == 2 and col % 4 == 3:
+                image[row][col] = hex_to_rgb(parents[10])
+            elif row % 4 == 3 and col % 4 == 0:
+                image[row][col] = hex_to_rgb(parents[9])
+            elif row % 4 == 3 and col % 4 == 1:
+                image[row][col] = hex_to_rgb(parents[6])
+            elif row % 4 == 3 and col % 4 == 2:
+                image[row][col] = hex_to_rgb(parents[8])
+            elif row % 4 == 3 and col % 4 == 3:
+                image[row][col] = hex_to_rgb(parents[7])
     return image
 
 
@@ -170,6 +263,14 @@ def generate_parents(hex_palette: [str], n: int) -> [str]:
     sorted_p = sorted(parent_palette.items(), key=operator.itemgetter(0))
     parent_palette = collections.OrderedDict(sorted_p)
     return parent_palette
+
+
+@functools.lru_cache(maxsize=None)  # 128 by default
+def fib(num):
+    if num < 2:
+        return num
+    else:
+        return fib(num - 1) + fib(num - 2)
 
 
 # This function works off a probabilistic method for filling in colors since we could have any n
@@ -191,7 +292,17 @@ def meeley_dither_n(image: NDArray, hex_palette: list[str], n: int,
             best_hex = closest_hex(image[row][col], parent_palette.keys(), h_weight, s_weight, v_weight)
             parents = parent_palette[best_hex]
 
-            image[row][col] = hex_to_rgb(random.choice(parents))  # random method
+            def interleave(a):
+                c = list(reversed(list(a)[(len(a) // 2):]))
+                d = a[:(len(a) - len(c))]
+
+                return [x for x in itertools.chain.from_iterable(itertools.zip_longest(c, d)) if x is not None]
+
+            parents = interleave(parents)
+
+            m = (row * 5381) + col
+
+            image[row][col] = hex_to_rgb(parents[m % len(parents)])
     return image
 
 
@@ -209,7 +320,7 @@ def parallel_constrain(image: NDArray, hex_palette: list[str],
     hex_palette = hex_palette.copy()
     pool = Pool(4)
     height, width, depth = image.shape
-    for row in range(height):
+    for row in tqdm(range(height)):
         image[row] = (pool.starmap(closest_rgb, [[p, hex_palette, h_weight, s_weight, v_weight] for p in image[row]]))
     pool.close()
     pool.join()
@@ -217,25 +328,35 @@ def parallel_constrain(image: NDArray, hex_palette: list[str],
 
 
 def results():
-    image = cv2.imread('unit.png')
+    image = cv2.imread('meeley3_128.jpg')
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     h_weight = 1
     s_weight = 1
     v_weight = 1
-    palette = rgb_palette
+    palette = three_bit_palette
 
-    cv2.imwrite('results/constrain.png', cv2.cvtColor(parallel_constrain(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
-    cv2.imwrite('results/floyd_ste.png', cv2.cvtColor(floyd_steinberg_dither(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
-    cv2.imwrite('results/meeley_d2.png', cv2.cvtColor(meeley_dither_2(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
-    cv2.imwrite('results/meeley_d4.png', cv2.cvtColor(meeley_dither_4(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    # cv2.imwrite('results/constrain.png',
+    #             cv2.cvtColor(parallel_constrain(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    # cv2.imwrite('results/floyd_ste.png',
+    #             cv2.cvtColor(floyd_steinberg_dither(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    # cv2.imwrite('results/meeley_d2.png',
+    #             cv2.cvtColor(meeley_dither_2(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    # cv2.imwrite('results/meeley_d4.png',
+    #             cv2.cvtColor(meeley_dither_4(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    cv2.imwrite('results/meeley_d8.png',
+                cv2.cvtColor(meeley_dither_n(image, palette, 8, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    # cv2.imwrite('results/meeley_d9.png',
+    #             cv2.cvtColor(meeley_dither_9(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
+    # cv2.imwrite('results/meeley_d16.png',
+    #             cv2.cvtColor(meeley_dither_16(image, palette, h_weight, s_weight, v_weight), cv2.COLOR_RGB2BGR))
 
 
 def main():
-    image = cv2.imread('color_test.jpg')
+    image = cv2.imread('unit.png')
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     start_time = time.time()
-    image = meeley_dither_n(image, two_bit_palette, 8)
+    image = meeley_dither_n(image, three_bit_palette, 8)
     print(f'Completed in {time.time() - start_time}s')
 
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -247,5 +368,5 @@ def main():
 if __name__ == '__main__':
     # print(combine('#FFFF00', '#0000FF'))
     # print(combine('#00FF00', '#00FF80'))
-    main()
-    # results()
+    # main()
+    results()
